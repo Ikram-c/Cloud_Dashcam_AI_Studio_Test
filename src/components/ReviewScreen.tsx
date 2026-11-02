@@ -6,10 +6,10 @@ import {
   Upload,
   Layers,
   FileVideo,
-  Sliders
+  Sliders,
 } from 'lucide-react';
 import { TimelinePayload, TimelineChunk, UpstreamWindow } from '../types';
-import { getSampleTimeline } from '../data/mockData';
+import { buildDynamicTimeline } from '../utils/simulationEngine';
 
 interface ReviewScreenProps {
   onBack: () => void;
@@ -17,9 +17,13 @@ interface ReviewScreenProps {
 }
 
 export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimeline }) => {
-  const [timeline, setTimeline] = useState<TimelinePayload>(() => initialTimeline || getSampleTimeline());
+  const [timeline, setTimeline] = useState<TimelinePayload>(
+    () => initialTimeline || buildDynamicTimeline()
+  );
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-  const [videoName, setVideoName] = useState<string>('CAR01_20240315_083000_CAM01');
+  const [videoName, setVideoName] = useState<string>(
+    initialTimeline?.video || 'CAR01_20240315_083000_CAM01'
+  );
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [opacity, setOpacity] = useState(65);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -31,10 +35,19 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const syntheticAnimRef = useRef<number | null>(null);
 
+  // Sync with parent initialTimeline when it updates
+  useEffect(() => {
+    if (initialTimeline) {
+      setTimeline(initialTimeline);
+      setVideoName(initialTimeline.video);
+    }
+  }, [initialTimeline]);
+
   // Rebuild upload curve whenever timeline changes
   useEffect(() => {
     if (!timeline || !timeline.series.length) return;
-    const dur = Math.max(timeline.duration, timeline.series[timeline.series.length - 1].t) || 6.0;
+    const dur =
+      Math.max(timeline.duration, timeline.series[timeline.series.length - 1].t) || 6.0;
     const windows = timeline.upstream;
     const windowSecs = windows.reduce((acc, w) => acc + (w.t1 - w.t0), 0);
     const totalBytes = timeline.series[timeline.series.length - 1].bytes;
@@ -68,21 +81,35 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     setVideoSrc(url);
     const stem = file.name.replace(/\.[^.]+$/, '');
     setVideoName(stem);
-    setTimeline(getSampleTimeline(stem, timeline.network));
+    setTimeline(
+      buildDynamicTimeline(
+        stem,
+        timeline.network,
+        timeline.series.length,
+        duration / Math.max(1, timeline.series.length)
+      )
+    );
   };
 
   // Switch demo preset
   const handleSelectDemo = (preset: string) => {
     setVideoName(preset);
-    setVideoSrc(null); // use synthetic simulation mode for demo
+    setVideoSrc(null);
     setCurrentTime(0);
     setIsPlaying(false);
-    setTimeline(getSampleTimeline(preset, timeline.network));
+    setTimeline(
+      buildDynamicTimeline(
+        preset,
+        timeline.network,
+        timeline.series.length,
+        duration / Math.max(1, timeline.series.length)
+      )
+    );
   };
 
   // Synthetic animation tick if no native video is uploaded
   useEffect(() => {
-    if (videoSrc) return; // native video handles its own time
+    if (videoSrc) return;
 
     let lastTimestamp = performance.now();
     const tick = (now: number) => {
@@ -132,20 +159,20 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
 
     ctx.clearRect(0, 0, w, h);
 
-    // If in synthetic mode (no user video), draw the dashcam road animation behind
     if (!videoSrc) {
       drawSyntheticDashcamRoad(ctx, w, h, currentTime);
     }
 
     if (!overlayEnabled || !timeline) return;
 
-    const dur = Math.max(
-      duration,
-      timeline.series.length ? timeline.series[timeline.series.length - 1].t : 0
-    ) || 6.0;
+    const dur =
+      Math.max(
+        duration,
+        timeline.series.length ? timeline.series[timeline.series.length - 1].t : 0
+      ) || 6.0;
 
     const x = (t: number) => Math.min(1, Math.max(0, t / dur)) * (w - 32) + 16;
-    const chartTop = h * 0.60;
+    const chartTop = h * 0.6;
     const chartBottom = h - 24;
     const chartH = chartBottom - chartTop;
 
@@ -155,7 +182,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     const y = (bytes: number) => chartBottom - (bytes / maxBytes) * chartH;
 
     // 1. Chart Backing
-    ctx.fillStyle = `rgba(13, 17, 23, ${opacity / 100 * 0.85})`;
+    ctx.fillStyle = `rgba(13, 17, 23, ${(opacity / 100) * 0.85})`;
     ctx.fillRect(0, chartTop - 26, w, h - chartTop + 26);
     ctx.strokeStyle = '#30363d';
     ctx.lineWidth = 1;
@@ -164,7 +191,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     ctx.lineTo(w, chartTop - 26);
     ctx.stroke();
 
-    // 2. Upstream Coverage Windows (green areas)
+    // 2. Upstream Coverage Windows
     timeline.upstream.forEach((win: UpstreamWindow) => {
       const wx0 = x(win.t0);
       const wx1 = x(win.t1);
@@ -178,7 +205,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
 
       ctx.fillStyle = 'rgba(63, 185, 80, 0.95)';
       ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(`⚡ Upstream [${win.zone}]`, wx0 + 4, chartTop - 7);
+      ctx.fillText(`Upstream [${win.zone}]`, wx0 + 4, chartTop - 7);
     });
 
     // 3. Chunk Created Markers
@@ -221,7 +248,6 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     ctx.stroke();
     ctx.lineWidth = 1;
 
-    // Small Playhead Diamond Knob
     ctx.fillStyle = '#58a6ff';
     ctx.beginPath();
     ctx.arc(px, chartTop - 24, 4, 0, Math.PI * 2);
@@ -231,7 +257,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     const caption = getLiveCaption(currentTime, timeline);
     ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
     ctx.beginPath();
-    ctx.roundRect(14, 14, 380, 32, 8);
+    ctx.roundRect(14, 14, 390, 32, 8);
     ctx.fill();
     ctx.strokeStyle = '#30363d';
     ctx.stroke();
@@ -248,7 +274,6 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
     ctx.fillText('● Upstreamed Data', 190, chartBottom + 16);
     ctx.fillStyle = '#d29922';
     ctx.fillText('| Chunk Slices Created', 320, chartBottom + 16);
-
   }, [currentTime, duration, timeline, uploadCurve, overlayEnabled, opacity, videoSrc]);
 
   const togglePlay = () => {
@@ -261,7 +286,12 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
         setIsPlaying(false);
       }
     } else {
-      setIsPlaying((prev) => !prev);
+      setIsPlaying((prev) => {
+        if (!prev && currentTime >= duration) {
+          setCurrentTime(0);
+        }
+        return !prev;
+      });
     }
   };
 
@@ -274,8 +304,8 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
-      {/* Top back */}
       <button
+        type="button"
         onClick={onBack}
         className="inline-flex items-center gap-1.5 text-xs text-[#8b949e] hover:text-[#58a6ff] transition-colors cursor-pointer"
       >
@@ -283,12 +313,11 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
         <span>Back</span>
       </button>
 
-      {/* Main Review Card */}
-      <div className="rounded-2xl bg-[#161b22] border border-[#30363d] p-6 sm:p-8 shadow-xl">
+      <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-6 sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#30363d] pb-4 mb-4">
           <div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>Footage Review & Overlay Player</span>
+            <h2 className="text-xl font-bold text-white">
+              Footage Review &amp; Overlay Player
             </h2>
             <p className="text-xs text-[#8b949e] mt-1">
               Replays video synchronized with pipeline processing timeline — frames captured,
@@ -296,23 +325,24 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
             </p>
           </div>
 
-          {/* Quick Demo Switcher */}
-          <div className="flex items-center gap-1.5 bg-[#0d1117] p-1 rounded-xl border border-[#30363d]">
+          <div className="flex items-center gap-1.5 bg-[#0d1117] p-1 rounded-lg border border-[#30363d]">
             <button
+              type="button"
               onClick={() => handleSelectDemo('CAR01_20240315_083000_CAM01')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors cursor-pointer whitespace-nowrap ${
                 videoName === 'CAR01_20240315_083000_CAM01'
-                  ? 'bg-[#58a6ff]/20 text-[#58a6ff]'
+                  ? 'bg-[#21262d] text-[#58a6ff]'
                   : 'text-[#8b949e] hover:text-[#e6edf3]'
               }`}
             >
               Demo 08:30
             </button>
             <button
+              type="button"
               onClick={() => handleSelectDemo('CAR01_20240315_120000_CAM01')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors cursor-pointer whitespace-nowrap ${
                 videoName === 'CAR01_20240315_120000_CAM01'
-                  ? 'bg-[#58a6ff]/20 text-[#58a6ff]'
+                  ? 'bg-[#21262d] text-[#58a6ff]'
                   : 'text-[#8b949e] hover:text-[#e6edf3]'
               }`}
             >
@@ -327,7 +357,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
             <Upload className="w-4 h-4 text-[#58a6ff]" />
             <span>Upload custom video footage or use interactive simulated vehicle feed:</span>
           </div>
-          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-xs font-medium text-[#e6edf3] border border-[#30363d] cursor-pointer transition-colors">
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-xs font-medium text-[#e6edf3] border border-[#30363d] cursor-pointer transition-colors whitespace-nowrap">
             <FileVideo className="w-3.5 h-3.5 text-[#58a6ff]" />
             <span>Choose Video File</span>
             <input
@@ -352,7 +382,6 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
             />
           ) : null}
 
-          {/* Canvas Overlay */}
           <canvas
             ref={canvasRef}
             className="absolute inset-0 w-full h-full pointer-events-none"
@@ -364,13 +393,17 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
         <div className="mt-4 space-y-3">
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={togglePlay}
-              className="w-9 h-9 rounded-xl bg-[#58a6ff] hover:bg-[#79b8ff] text-[#04121f] flex items-center justify-center font-bold cursor-pointer transition-transform active:scale-95 shadow-md shadow-[#58a6ff]/20"
+              className="w-9 h-9 rounded-lg bg-[#58a6ff] hover:bg-[#79b8ff] text-[#04121f] flex items-center justify-center font-bold cursor-pointer transition-transform active:scale-95"
             >
-              {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+              {isPlaying ? (
+                <Pause className="w-4 h-4 fill-current" />
+              ) : (
+                <Play className="w-4 h-4 fill-current ml-0.5" />
+              )}
             </button>
 
-            {/* Time Slider */}
             <div className="flex-1 flex items-center gap-2">
               <input
                 type="range"
@@ -381,7 +414,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
                 onChange={(e) => handleSeek(parseFloat(e.target.value))}
                 className="w-full accent-[#58a6ff] cursor-pointer h-1.5 bg-[#30363d] rounded-lg"
               />
-              <span className="font-mono text-xs text-[#8b949e] shrink-0 w-20 text-right">
+              <span className="font-mono tabular-nums text-xs text-[#8b949e] shrink-0 w-24 text-right">
                 {currentTime.toFixed(2)}s / {duration.toFixed(2)}s
               </span>
             </div>
@@ -414,43 +447,44 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
                   onChange={(e) => setOpacity(parseInt(e.target.value))}
                   className="w-20 accent-[#58a6ff] cursor-pointer h-1 bg-[#30363d] rounded"
                 />
-                <span className="font-mono text-[11px]">{opacity}%</span>
+                <span className="font-mono tabular-nums text-[11px]">{opacity}%</span>
               </div>
             </div>
 
-            <div className="text-xs text-[#8b949e] font-mono flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#3fb950]" />
-              <span>Carrier: {timeline.network.toUpperCase()}</span>
+            <div className="text-xs text-[#8b949e] font-mono tabular-nums">
+              Carrier: {timeline.network.toUpperCase()} · {timeline.series.length} buffered frames
             </div>
           </div>
         </div>
 
         {/* Subsystem Details Drawer */}
         <div className="mt-6 pt-6 border-t border-[#30363d] grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="p-3 rounded-xl bg-[#0d1117] border border-[#30363d]">
-            <div className="text-xs font-semibold text-[#58a6ff] flex items-center gap-1.5 mb-1">
-              <span>● Frame Sampling & Buffer</span>
+          <div className="p-3.5 rounded-xl bg-[#0d1117] border border-[#30363d]">
+            <div className="text-xs font-semibold text-[#58a6ff] mb-1">
+              Frame Sampling &amp; Buffer
             </div>
-            <p className="text-[11px] text-[#8b949e] leading-relaxed">
-              Every 30 frames ({timeline.fps} FPS). Backlog accumulates to {timeline.series.length} kept frames (~{(timeline.series.length * 0.38).toFixed(1)} MB).
+            <p className="text-[11px] text-[#8b949e] leading-relaxed font-mono tabular-nums">
+              {timeline.fps} FPS stream · Backlog accumulates to {timeline.series.length} kept
+              frames (~{(timeline.series.length * 0.385).toFixed(2)} MB).
             </p>
           </div>
 
-          <div className="p-3 rounded-xl bg-[#0d1117] border border-[#30363d]">
-            <div className="text-xs font-semibold text-[#d29922] flex items-center gap-1.5 mb-1">
-              <span>| Chunk Partitioning</span>
+          <div className="p-3.5 rounded-xl bg-[#0d1117] border border-[#30363d]">
+            <div className="text-xs font-semibold text-[#d29922] mb-1">
+              Chunk Partitioning
             </div>
             <p className="text-[11px] text-[#8b949e] leading-relaxed">
-              Slices created at chunk boundaries (frames 0..151). Flushed and serialized for storage without blocking capture.
+              {timeline.chunks.length} chunk slice{timeline.chunks.length === 1 ? '' : 's'} created
+              and flushed for upstream serialization without blocking capture.
             </p>
           </div>
 
-          <div className="p-3 rounded-xl bg-[#0d1117] border border-[#30363d]">
-            <div className="text-xs font-semibold text-[#3fb950] flex items-center gap-1.5 mb-1">
-              <span>⚡ Coverage Windows</span>
+          <div className="p-3.5 rounded-xl bg-[#0d1117] border border-[#30363d]">
+            <div className="text-xs font-semibold text-[#3fb950] mb-1">
+              Coverage Windows
             </div>
-            <p className="text-[11px] text-[#8b949e] leading-relaxed">
-              Liang-Barsky clipped entry at t=0.8s, exit at t=5.2s. Cellular backlog drained sustainably at wire speed.
+            <p className="text-[11px] text-[#8b949e] leading-relaxed font-mono tabular-nums">
+              {timeline.upstream.map((w) => `${w.zone} [${w.t0}s..${w.t1}s]`).join(' · ')}
             </p>
           </div>
         </div>
@@ -459,7 +493,6 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({ onBack, initialTimel
   );
 };
 
-// Helper: Stroke a polyline series
 function strokeSeries(
   ctx: CanvasRenderingContext2D,
   points: number[][],
@@ -480,7 +513,6 @@ function strokeSeries(
   ctx.lineWidth = 1;
 }
 
-// Helper: Determine current caption text and style
 function getLiveCaption(
   now: number,
   timeline: TimelinePayload
@@ -516,21 +548,18 @@ function getLiveCaption(
   };
 }
 
-// Synthetic Dashcam Feed Animator (renders asphalt road, lane lines, horizon, and moving car hood)
 function drawSyntheticDashcamRoad(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   t: number
 ) {
-  // Sky
   const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.45);
   skyGrad.addColorStop(0, '#111827');
   skyGrad.addColorStop(1, '#1e293b');
   ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, w, h * 0.45);
 
-  // Distant hills / mountains
   ctx.fillStyle = '#0f172a';
   ctx.beginPath();
   ctx.moveTo(0, h * 0.45);
@@ -541,11 +570,9 @@ function drawSyntheticDashcamRoad(
   ctx.lineTo(w, h * 0.45);
   ctx.fill();
 
-  // Ground / Grass
   ctx.fillStyle = '#1c1917';
   ctx.fillRect(0, h * 0.45, w, h * 0.55);
 
-  // Road Perspective Triangle
   const horizonY = h * 0.45;
   const horizonW = 20;
   const bottomW = w * 0.65;
@@ -560,7 +587,6 @@ function drawSyntheticDashcamRoad(
   ctx.closePath();
   ctx.fill();
 
-  // Road edges
   ctx.strokeStyle = '#e2e8f0';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -570,9 +596,8 @@ function drawSyntheticDashcamRoad(
   ctx.lineTo(cx + bottomW, h);
   ctx.stroke();
 
-  // Animated dashed lane lines
   const numDashes = 10;
-  const speed = 2.5; // cycles per second
+  const speed = 2.5;
   const offset = (t * speed) % 1;
 
   ctx.fillStyle = '#facc15';
@@ -595,8 +620,11 @@ function drawSyntheticDashcamRoad(
     ctx.fill();
   }
 
-  // Dashcam timestamp watermark OSD
   ctx.font = 'mono 11px monospace';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.fillText(`CAM01 · 2024-03-15 08:30:${String(Math.floor(t % 60)).padStart(2, '0')}`, 16, h * 0.55);
+  ctx.fillText(
+    `CAM01 · 2024-03-15 08:30:${String(Math.floor(t % 60)).padStart(2, '0')}`,
+    16,
+    h * 0.55
+  );
 }

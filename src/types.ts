@@ -84,8 +84,35 @@ export interface NetworksConfig {
   [carrier: string]: CarrierZoneMap;
 }
 
+export type LogLevel = 'INFO' | 'PASS' | 'REJECT' | 'WARN' | 'CHUNK' | 'SYS';
+
+export interface StructuredLogEntry {
+  id: string;
+  timestamp: string;
+  elapsedSec: number;
+  level: LogLevel;
+  subsystem: string;
+  message: string;
+}
+
+export interface UtilizationPoint {
+  time: string;
+  cpu: number;
+  memory: number;
+}
+
+export interface SimulationStep {
+  progress: number;
+  video: string;
+  level: LogLevel;
+  subsystem: string;
+  message: string;
+  cpuTarget: number;
+  memTarget: number;
+}
+
 export interface JobState {
-  state: 'idle' | 'running' | 'done' | 'failed';
+  state: 'idle' | 'running' | 'paused' | 'done' | 'failed';
   progress: number;
   video: string | null;
   network: string | null;
@@ -94,7 +121,29 @@ export interface JobState {
   summaries: VideoSummary[];
   currentFrameIndex?: number;
   totalFramesCurrentVideo?: number;
-  logs?: string[];
+  logs: string[];
+  structuredLogs: StructuredLogEntry[];
+  stepIndex: number;
+  totalSteps: number;
+  elapsedSeconds: number;
+  speedMultiplier: 0.5 | 1 | 2;
+  activeConfig?: ExtractRequest;
+  utilizationHistory: UtilizationPoint[];
+}
+
+export interface CachedRunRecord {
+  id: string;
+  timestamp: string;
+  config: ExtractRequest;
+  summaries: VideoSummary[];
+  zones: Record<string, number>;
+  network: string;
+  totalSampled: number;
+  totalKept: number;
+  bandwidthSavedPct: number;
+  durationSec: number;
+  structuredLogs: StructuredLogEntry[];
+  timeline: TimelinePayload;
 }
 
 export interface CloudJobRequest {

@@ -1,37 +1,66 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Play, Info, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Play, Info, AlertTriangle, RotateCcw } from 'lucide-react';
 import { ExtractRequest, QualityGates } from '../types';
 import { CARRIER_NETWORKS } from '../data/mockData';
+import { buildDynamicSimulationPlan, DEFAULT_EXTRACT_REQUEST } from '../utils/simulationEngine';
 
 interface ConfigureScreenProps {
+  initialConfig: ExtractRequest;
+  onConfigChange: (config: ExtractRequest) => void;
+  onResetConfig: () => void;
   onBack: () => void;
   onStartExtraction: (request: ExtractRequest) => void;
   isLoading?: boolean;
 }
 
 export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
+  initialConfig,
+  onConfigChange,
+  onResetConfig,
   onBack,
   onStartExtraction,
   isLoading = false,
 }) => {
-  const [videoDir, setVideoDir] = useState('test_data/videos');
-  const [outputDir, setOutputDir] = useState('extracted_frames');
-  const [gpxSource, setGpxSource] = useState<'config' | 'local' | 'mock' | 'none'>('local');
-  const [gpxPath, setGpxPath] = useState('test_data/track.gpx');
-  const [network, setNetwork] = useState('vodafone');
-  const [sampling, setSampling] = useState('frames_30');
-  const [gates, setGates] = useState<QualityGates>({
-    blur: true,
-    exposure: true,
-    duplicate: true,
-    illumination: true,
-    weiss: true,
-    coverage: true,
-  });
+  const [videoDir, setVideoDir] = useState(initialConfig.videos || 'test_data/videos');
+  const [outputDir, setOutputDir] = useState(initialConfig.output || 'extracted_frames');
+  const [gpxSource, setGpxSource] = useState<'config' | 'local' | 'mock' | 'none'>(
+    initialConfig.gpx_source || 'local'
+  );
+  const [gpxPath, setGpxPath] = useState(initialConfig.gpx_path || 'test_data/track.gpx');
+  const [network, setNetwork] = useState(initialConfig.network || 'vodafone');
+  const [sampling, setSampling] = useState(initialConfig.sampling || 'frames_30');
+  const [gates, setGates] = useState<QualityGates>(
+    initialConfig.gates || DEFAULT_EXTRACT_REQUEST.gates
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Sync changes to parent & localStorage cache
+  useEffect(() => {
+    const updated: ExtractRequest = {
+      videos: videoDir,
+      output: outputDir,
+      gpx_source: gpxSource,
+      gpx_path: gpxSource === 'local' ? gpxPath : undefined,
+      network,
+      sampling,
+      gates,
+    };
+    onConfigChange(updated);
+  }, [videoDir, outputDir, gpxSource, gpxPath, network, sampling, gates]);
 
   const toggleGate = (key: keyof QualityGates) => {
     setGates((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleResetDefaults = () => {
+    setVideoDir(DEFAULT_EXTRACT_REQUEST.videos!);
+    setOutputDir(DEFAULT_EXTRACT_REQUEST.output!);
+    setGpxSource(DEFAULT_EXTRACT_REQUEST.gpx_source!);
+    setGpxPath(DEFAULT_EXTRACT_REQUEST.gpx_path!);
+    setNetwork(DEFAULT_EXTRACT_REQUEST.network!);
+    setSampling(DEFAULT_EXTRACT_REQUEST.sampling!);
+    setGates(DEFAULT_EXTRACT_REQUEST.gates);
+    onResetConfig();
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -61,28 +90,51 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
 
   const carrierZones = CARRIER_NETWORKS[network] || {};
 
+  // Live preview of dynamic outcome based on current selections
+  const previewPlan = buildDynamicSimulationPlan({
+    videos: videoDir,
+    output: outputDir,
+    gpx_source: gpxSource,
+    gpx_path: gpxPath,
+    network,
+    sampling,
+    gates,
+  });
+  const previewTotalSampled = previewPlan.summaries.reduce((a, b) => a + b.sampled, 0);
+  const previewTotalKept = previewPlan.summaries.reduce((a, b) => a + b.kept, 0);
+  const previewSavingsPct =
+    previewTotalSampled > 0
+      ? Math.round(((previewTotalSampled - previewTotalKept) / previewTotalSampled) * 100)
+      : 0;
+
   return (
     <div className="max-w-3xl mx-auto space-y-4">
       {/* Back button */}
       <button
+        type="button"
         onClick={onBack}
         className="inline-flex items-center gap-1.5 text-xs text-[#8b949e] hover:text-[#58a6ff] transition-colors cursor-pointer"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
-        <span>Back to Welcome</span>
+        <span>Back to Dashboard</span>
       </button>
 
-      <div className="rounded-2xl bg-[#161b22] border border-[#30363d] p-6 sm:p-8 shadow-xl">
-        <div className="flex items-center justify-between border-b border-[#30363d] pb-4 mb-6">
+      <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-6 sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#30363d] pb-4 mb-6">
           <div>
             <h2 className="text-xl font-bold text-white">Pipeline Configuration</h2>
             <p className="text-xs text-[#8b949e] mt-1">
-              Configure video source paths, telemetry input, carrier routing, and active quality gates.
+              Settings auto-save to browser storage and dynamically drive extraction simulation outcomes.
             </p>
           </div>
-          <span className="text-[11px] font-mono px-2 py-1 rounded bg-[#30363d] text-[#58a6ff]">
-            config.yaml linked
-          </span>
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-xs text-[#8b949e] hover:text-[#e6edf3] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Defaults</span>
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -100,7 +152,7 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
                 className="w-full bg-[#0d1117] text-[#e6edf3] border border-[#30363d] rounded-lg px-3 py-2 text-xs font-mono focus:border-[#58a6ff] focus:outline-none focus:ring-1 focus:ring-[#58a6ff]"
               />
               <span className="text-[11px] text-[#8b949e]/80 mt-1 block">
-                Supports .mp4, .mov, .avi, .mkv
+                Supports .mp4 · .mov · .avi · .mkv
               </span>
             </div>
 
@@ -189,22 +241,20 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
             </div>
           )}
 
-          {/* Carrier Active Zones Badge */}
-          <div className="bg-[#0d1117] p-3 rounded-xl border border-[#30363d] flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
+          {/* Carrier Active Zones Metadata */}
+          <div className="bg-[#0d1117] p-3.5 rounded-xl border border-[#30363d] flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-2 text-[#8b949e]">
               <Info className="w-4 h-4 text-[#58a6ff]" />
-              <span className="text-xs text-[#8b949e]">
-                Active Carrier Bounding Boxes:
-              </span>
+              <span>Active {network.toUpperCase()} Coverage Bounding Boxes:</span>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {Object.keys(carrierZones).map((zoneName) => (
-                <span
-                  key={zoneName}
-                  className="px-2 py-0.5 rounded-full text-[11px] font-mono bg-[#3fb950]/15 text-[#3fb950] border border-[#3fb950]/30"
-                >
-                  {zoneName} [{carrierZones[zoneName].map(v => v.toFixed(2)).join(', ')}]
-                </span>
+            <div className="flex flex-wrap items-center gap-2 font-mono tabular-nums text-[#3fb950]">
+              {Object.keys(carrierZones).map((zoneName, idx) => (
+                <React.Fragment key={zoneName}>
+                  {idx > 0 && <span className="text-[#30363d]">·</span>}
+                  <span>
+                    {zoneName} [{carrierZones[zoneName].map((v) => v.toFixed(2)).join(', ')}]
+                  </span>
+                </React.Fragment>
               ))}
             </div>
           </div>
@@ -214,28 +264,47 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h3 className="text-sm font-semibold text-[#e6edf3]">
-                  Estimation & Quality Gates
+                  Estimation &amp; Quality Gates
                 </h3>
                 <p className="text-xs text-[#8b949e]">
-                  Disabled gates neutralize thresholds via frozen settings (can only disable what config enables).
+                  Toggle gates on or off to observe live differences in frame retention and bandwidth savings.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setGates({
-                    blur: true,
-                    exposure: true,
-                    duplicate: true,
-                    illumination: true,
-                    weiss: true,
-                    coverage: true,
-                  })
-                }
-                className="text-[11px] text-[#58a6ff] hover:underline cursor-pointer"
-              >
-                Enable All
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGates({
+                      blur: true,
+                      exposure: true,
+                      duplicate: true,
+                      illumination: true,
+                      weiss: true,
+                      coverage: true,
+                    })
+                  }
+                  className="text-xs text-[#58a6ff] hover:underline cursor-pointer"
+                >
+                  Enable All
+                </button>
+                <span className="text-[#30363d]">·</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGates({
+                      blur: false,
+                      exposure: false,
+                      duplicate: false,
+                      illumination: false,
+                      weiss: false,
+                      coverage: false,
+                    })
+                  }
+                  className="text-xs text-[#8b949e] hover:text-[#e6edf3] hover:underline cursor-pointer"
+                >
+                  Disable All
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -244,48 +313,43 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
                   id: 'blur',
                   label: 'Blur Gate',
                   desc: 'Laplacian variance >= 60.0',
-                  color: '#58a6ff',
                 },
                 {
                   id: 'exposure',
                   label: 'Exposure Gate',
                   desc: 'Intensity limits [25, 235]',
-                  color: '#3fb950',
                 },
                 {
                   id: 'duplicate',
                   label: 'Duplicate Gate',
                   desc: 'Log-domain cross-correlation',
-                  color: '#d29922',
                 },
                 {
                   id: 'illumination',
                   label: 'Illumination',
                   desc: 'NOAA solar + Open-Meteo sky',
-                  color: '#f0883e',
                 },
                 {
                   id: 'weiss',
                   label: 'Weiss Recovery',
                   desc: 'Intrinsic reflectance albedo',
-                  color: '#a371f7',
                 },
                 {
                   id: 'coverage',
                   label: 'Coverage Chunks',
                   desc: 'Sweep-line + Liang-Barsky',
-                  color: '#58a6ff',
                 },
-              ].map(({ id, label, desc, color }) => {
+              ].map(({ id, label, desc }) => {
                 const isChecked = gates[id as keyof QualityGates];
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={id}
                     onClick={() => toggleGate(id as keyof QualityGates)}
-                    className={`flex items-start gap-2.5 p-3 rounded-xl border transition-all cursor-pointer ${
+                    className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isChecked
-                        ? 'bg-[#1f242c] border-[#58a6ff]/40 shadow-sm'
-                        : 'bg-[#0d1117] border-[#30363d] opacity-50'
+                        ? 'bg-[#1f242c] border-[#58a6ff]/50'
+                        : 'bg-[#0d1117] border-[#30363d] opacity-60'
                     }`}
                   >
                     <input
@@ -295,20 +359,37 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
                       className="mt-0.5 rounded border-[#30363d] text-[#58a6ff] focus:ring-0 cursor-pointer"
                     />
                     <div>
-                      <div className="text-xs font-semibold text-[#e6edf3] flex items-center gap-1.5">
-                        <span>{label}</span>
-                        {isChecked && (
-                          <span
-                            className="w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: color }}
-                          />
-                        )}
-                      </div>
-                      <div className="text-[10px] text-[#8b949e] mt-0.5">{desc}</div>
+                      <div className="text-xs font-semibold text-[#e6edf3]">{label}</div>
+                      <div className="text-[11px] text-[#8b949e] mt-0.5">{desc}</div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Live Dynamic Impact Preview Bar */}
+          <div className="bg-[#0d1117] p-4 rounded-xl border border-[#30363d] flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold text-[#e6edf3]">
+                Projected Run Impact (5 Survey Videos)
+              </div>
+              <div className="text-[11px] text-[#8b949e] mt-0.5">
+                Calculated dynamically from your selected sampling interval and active quality gates
+              </div>
+            </div>
+            <div className="flex items-center gap-3 font-mono tabular-nums text-xs">
+              <span className="text-[#8b949e]">
+                Sampled: <strong className="text-[#e6edf3]">{previewTotalSampled}</strong>
+              </span>
+              <span aria-hidden="true" className="text-[#30363d]">·</span>
+              <span className="text-[#8b949e]">
+                Kept: <strong className="text-[#3fb950]">{previewTotalKept}</strong>
+              </span>
+              <span aria-hidden="true" className="text-[#30363d]">·</span>
+              <span className="text-[#8b949e]">
+                Bandwidth Saved: <strong className="text-[#d29922]">{previewSavingsPct}%</strong>
+              </span>
             </div>
           </div>
 
@@ -324,7 +405,7 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
             <button
               type="button"
               onClick={onBack}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-[#8b949e] hover:text-[#e6edf3] transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-lg text-xs font-medium text-[#8b949e] hover:text-[#e6edf3] transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -332,7 +413,7 @@ export const ConfigureScreen: React.FC<ConfigureScreenProps> = ({
             <button
               type="submit"
               disabled={isLoading}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#58a6ff] text-[#04121f] font-semibold text-xs sm:text-sm hover:bg-[#79b8ff] transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-[#58a6ff] text-[#04121f] font-semibold text-xs sm:text-sm hover:bg-[#79b8ff] transition-all cursor-pointer active:scale-95 disabled:opacity-50"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>{isLoading ? 'Starting Pipeline...' : 'Start Extraction'}</span>
